@@ -1,4 +1,4 @@
-;; Copyright (C) 2015-2017 Free Software Foundation, Inc
+;; Copyright (C) 2015-2017, 2019 Free Software Foundation, Inc
 
 ;; Author: Rocky Bernstein <rocky@gnu.org>
 
@@ -26,7 +26,7 @@
 (require-relative-list '("../../lang/posix-shell") "realgud-lang-")
 
 (defvar realgud:bashdb-pat-hash)
-(declare-function make-realgud-loc-pat (realgud-loc))
+(declare-function make-realgud-loc-pat 'realgud-regexp)
 
 (defvar realgud:bashdb-pat-hash (make-hash-table :test 'equal)
   "Hash key is the what kind of pattern we want to match:
@@ -84,6 +84,11 @@ realgud-loc-pat struct")
 (setf (gethash "debugger-backtrace" realgud:bashdb-pat-hash)
       realgud:POSIX-debugger-backtrace-pat)
 
+;; FIXME breakpoints aren't locations. It should be a different structure
+;; realgud-loc that describes a zshdb "info breakpoints" line.
+(setf (gethash "debugger-breakpoint" realgud:bashdb-pat-hash)
+      realgud:POSIX-debugger-breakpoint-pat)
+
 ;; realgud-loc-pat for a termination message.
 (setf (gethash "termination" realgud:bashdb-pat-hash)
        "^bashdb: That's all, folks...\n")
@@ -91,20 +96,26 @@ realgud-loc-pat struct")
 (setf (gethash "font-lock-keywords" realgud:bashdb-pat-hash)
       realgud:POSIX-debugger-font-lock-keywords)
 
+(setf (gethash "font-lock-breakpoint-keywords" realgud:bashdb-pat-hash)
+      realgud:POSIX-debugger-font-lock-breakpoint-keywords)
+
 (setf (gethash "bashdb" realgud-pat-hash) realgud:bashdb-pat-hash)
 
 (defvar realgud:bashdb-command-hash (make-hash-table :test 'equal)
   "Hash key is command name like 'quit' and the value is
-  the bashdb command to use, like 'quit!'")
+the bashdb command to use, like 'quit!'")
 
 (setf (gethash "bashdb" realgud-command-hash) realgud:bashdb-command-hash)
 
-(setf (gethash "clear"  realgud:bashdb-command-hash) "clear %l")
-(setf (gethash "eval"   realgud:bashdb-command-hash) "eval %s")
-(setf (gethash "quit"   realgud:bashdb-command-hash) "quit")
-(setf (gethash "until"  realgud:bashdb-command-hash) "continue %l")
+(setf (gethash "clear"            realgud:bashdb-command-hash) "clear %l")
+(setf (gethash "eval"             realgud:bashdb-command-hash) "eval %s")
+(setf (gethash "info-breakpoints" realgud:bashdb-command-hash) "info breakpoints")
+(setf (gethash "quit"             realgud:bashdb-command-hash) "quit")
+(setf (gethash "until"            realgud:bashdb-command-hash) "continue %l")
 
 ;; Unsupported features:
-(setf (gethash "jump"  realgud:bashdb-command-hash) "*not-implemented*")
+(setf (gethash "break-fn"   realgud:bashdb-command-hash) "*not-implemented*")
+(setf (gethash "finish"     realgud:bashdb-command-hash) "*not-implemented*")
+(setf (gethash "jump"       realgud:bashdb-command-hash) "*not-implemented*")
 
 (provide-me "realgud:bashdb-")

@@ -22,6 +22,7 @@
 (require-relative-list '("buffer/helper") "realgud-buffer-")
 
 (declare-function realgud-get-cmdbuf        'realgud-buffer-helper)
+(declare-function realgud-cmdbuf-info-in-debugger?= 'realgud-command)
 (declare-function realgud-window-cmd-undisturb-src 'realgud-window)
 (declare-function comint-goto-process-mark  'comint)
 (declare-function comint-send-input         'comint)
@@ -135,6 +136,7 @@ taken from current buffer, or OPT-BUFFER if non-nil.  Some
   %F -- Name without directory or extension of current source file.
   %x -- Name of current source file.
   %X -- Expanded name of current source file.
+  %U -- Expanded name of current source file stripping file://.
   %d -- Directory of current source file.
   %l -- Number of current source line.
   %c -- Fully qualified class name derived from the expression
@@ -150,7 +152,7 @@ taken from current buffer, or OPT-BUFFER if non-nil.  Some
 	 result)
     (while (and fmt-str
 		(let ((case-fold-search nil))
-		  (string-match "\\([^%]*\\)%\\([dfFlpqxXs]\\)" fmt-str)))
+		  (string-match "\\([^%]*\\)%\\([dfFlpqxUXs]\\)" fmt-str)))
       (let* ((key-str (match-string 2 fmt-str))
 	     (key (string-to-char key-str)))
 	(setq result
@@ -197,7 +199,14 @@ taken from current buffer, or OPT-BUFFER if non-nil.  Some
 		((eq key ?x)
 		 (or (and src-file-name src-file-name)
 		     "*source-file-not-found-for-%x"))
+
 		((eq key ?X)
+		 (or (and src-file-name (expand-file-name src-file-name))
+		     "*source-file-not-found-for-%X"))
+
+		((eq key ?U)
+		 (if (string-match src-file-name "^file://")
+		     (setq src-file-name (substring src-file-name 7)))
 		 (or (and src-file-name (expand-file-name src-file-name))
 		     "*source-file-not-found-for-%X"))
 

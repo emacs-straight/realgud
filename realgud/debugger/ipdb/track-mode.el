@@ -1,4 +1,4 @@
-;; Copyright (C) 2016 Free Software Foundation, Inc
+;; Copyright (C) 2016, 2018 Free Software Foundation, Inc
 
 ;; Author: Rocky Bernstein <rocky@gnu.org>
 ;; Author: Sean Farley <sean@farley.io>
@@ -23,6 +23,7 @@
                          "../../common/menu"
                          "../../common/track"
                          "../../common/track-mode"
+			 "../../common/utils"
                          )
                        "realgud-")
 (require-relative-list '("core" "init") "realgud:ipdb-")
@@ -34,6 +35,7 @@
 (declare-function realgud:track-set-debugger 'realgud-track-mode)
 (declare-function realgud-python-populate-command-keys 'realgud-lang-python)
 (declare-function realgud:ipdb-completion-at-point 'realgud:ipdb-core)
+(declare-function realgud:remove-ansi-schmutz      'realgud:utils)
 
 (realgud-python-populate-command-keys ipdb-track-mode-map)
 
@@ -41,6 +43,7 @@
   (if ipdb-track-mode
       (progn
         (use-local-map ipdb-track-mode-map)
+	(realgud:remove-ansi-schmutz)
         (add-hook 'completion-at-point-functions
                   'realgud:ipdb-completion-at-point nil t)
         (message "using ipdb mode map")

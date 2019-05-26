@@ -1,4 +1,4 @@
-; Copyright (C) 2010-2011, 2015 Free Software Foundation, Inc
+; Copyright (C) 2010-2011, 2015, 2019 Free Software Foundation, Inc
 
 ;; Author: Rocky Bernstein <rocky@gnu.org>
 
@@ -80,6 +80,12 @@ menu. (The common map typically contains function key bindings.)"
       (realgud-menu-item debugger-map "Backtrace" 'realgud:window-bt
 			 :enable '(realgud-get-process)
 			 :help (documentation 'realgud:window-bt)
+			 ))
+
+    (define-key debugger-map [breakpoints]
+      (realgud-menu-item debugger-map "Breakpoints" 'realgud:window-brkpt
+			 :enable '(realgud-get-process)
+			 :help (documentation 'realgud:window-brkpt)
 			 ))
 
     (define-key debugger-map [arrow3]

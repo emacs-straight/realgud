@@ -38,3 +38,4 @@
   (realgud:load-features) ; load and test
   (should-not (= 0 (length (realgud-test-helper))))
   (should (member 'realgud-pdb features)))
+

@@ -16,6 +16,7 @@
 (require 'load-relative)
 
 (declare-function realgud:cmd-frame 'realgud-cmds)
+(declare-function realgud-loc-p     'realgud-loc)
 
 (defun realgud:follow-mark(mark)
   (when (markerp mark)
@@ -33,6 +34,7 @@
 	 (frame-num (get-text-property pos 'frame-num))
 	 )
     (cond ((markerp mark) (realgud:follow-mark mark) 't)
+	  ((realgud-loc-p mark) (realgud:follow-mark (realgud-loc-marker mark)) 't)
 	  ((stringp filename)
 	   (find-file-other-window filename))
 	  ((numberp frame-num) (realgud:cmd-frame frame-num))

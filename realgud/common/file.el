@@ -1,4 +1,4 @@
-;; Copyright (C) 2010-2011, 2013-2014, 2016-2017 Free Software Foundation, Inc
+;; Copyright (C) 2010-2011, 2013-2014, 2016-2019 Free Software Foundation, Inc
 
 ;; Author: Rocky Bernstein <rocky@gnu.org>
 
@@ -15,24 +15,34 @@
 ; Should realgud:file-loc-from-line be here or elsewhere?
 (require 'load-relative)
 (require 'compile) ;; for compilation-find-file
+(require 'seq) ;; for seq-find
 (require-relative-list '("helper" "loc") "realgud-")
-
-(defvar realgud-file-remap (make-hash-table :test 'equal)
-  "How to remap files we otherwise can't find in the
-  filesystem. The hash key is the file string we saw, and the
-  value is associated filesystem string presumably in the
-  filesystem")
-
+(require-relative-list '("buffer/command") "realgud-buffer-")
 
 (declare-function realgud:strip         'realgud)
 (declare-function realgud-loc-goto      'realgud-loc)
+(declare-function realgud-get-cmdbuf    'realgud-buffer-helper)
 (declare-function buffer-killed?        'helper)
 (declare-function compilation-find-file 'compile)
+(declare-function realgud-cmdbuf-info-ignore-re-file-list  'realgud-buffer-command)
+(declare-function realgud-cmdbuf-info-source-path=         'realgud-buffer-command)
+(declare-function realgud-cmdbuf-mutex                     'realgud-buffer-command)
+(declare-function realgud-cmdbuf-filename-remap-alist      'realgud-buffer-command)
+(declare-function realgud-cmdbuf-filename-remap-alist=     'realgud-buffer-command)
+(declare-function realgud-cmdbuf-mutex                     'realgud-buffer-command)
 
-(defcustom realgud-file-find-function 'compilation-find-file
+(defcustom realgud-file-find-function 'realgud:find-file
+;;(defcustom realgud-file-find-function 'compilation-find-file
   "Function to call when we can't easily find file"
   :type 'function
   :group 'realgud)
+
+(defun realgud:find-file (marker filename directory &optional formats)
+  "A wrapper around compilation find-file. We set the prompt
+   to indicate we are looking for a source-code file."
+   (or formats (setq formats "%s"))
+   (let ((compilation-error "source-code file"))
+    (compilation-find-file marker filename directory formats)))
 
 (defun realgud:file-line-count(filename)
   "Return the number of lines in file FILENAME, or nil FILENAME can't be
@@ -61,12 +71,13 @@ at LINE-NUMBER or nil if it is not there"
                 (current-column))))))
     (error nil)))
 
+(defun realgud:file-ignore(filename ignore-re-file-list)
+  (seq-find '(lambda (file-re) (string-match file-re filename)) ignore-re-file-list))
+
 ;; FIXME: should allow column number to be passed in.
 (defun realgud:file-loc-from-line(filename line-number
 					   &optional cmd-marker source-text bp-num
-					   ;; FIXME: remove ignore-file-re and cover with
-					   ;; find-file-fn.
-					   ignore-file-re find-file-fn directory)
+					   find-file-fn directory)
   "Return a realgud-loc for FILENAME and LINE-NUMBER and the
 other optional position information.
 
@@ -80,33 +91,63 @@ blanks, or deliberately ignoring 'pseudo-file patterns like (eval
 If we're unable find the source code we return a string describing the
 problem as best as we can determine."
 
-  (unless (and filename (file-readable-p filename))
-    (if find-file-fn
-        (setq filename (funcall find-file-fn filename))
-      ;; FIXME: Remove the below by refactoring to use the above find-file-fn
-      ;; else
-      (if (and ignore-file-re (string-match ignore-file-re filename))
-          (message "tracking ignored for pseudo-file %s" filename)
-        ;; else
-        (let ((remapped-filename))
-          (if (gethash filename realgud-file-remap)
-              (progn
-                (setq remapped-filename (gethash filename realgud-file-remap))
-                (if (file-exists-p remapped-filename)
-                    (setq filename remapped-filename)
-                  (remhash filename realgud-file-remap)))
-            ;; else
-            (let ((found-file (funcall realgud-file-find-function (point-marker) filename directory)))
-                (when found-file
-                  (setq remapped-filename (buffer-file-name found-file))
-                  (when (and remapped-filename (file-exists-p remapped-filename))
-                    (puthash filename remapped-filename realgud-file-remap)
-                    (setq filename remapped-filename)
-                    ))
-                )))
-        )
-      ;; FIXME: remove above -----------------------------------.
-      ))
+  (let* ((cmdbuf (or (realgud-get-cmdbuf) cmd-marker))
+	 (ignore-re-file-list (realgud-cmdbuf-ignore-re-file-list cmdbuf))
+	 (filename-remap-alist (realgud-cmdbuf-filename-remap-alist cmdbuf))
+	 (remapped-filename
+	  (assoc filename filename-remap-alist))
+	 (mutex (realgud-cmdbuf-mutex cmdbuf))
+	 )
+
+    ;;(with-mutex
+    ;; mutex
+     (when remapped-filename
+       (if (file-readable-p (cdr remapped-filename))
+	   (setq filename (cdr remapped-filename))
+	 ;; else remove from map since no find
+	 (realgud-cmdbuf-filename-remap-alist=
+	  (delq (assoc remapped-filename filename-remap-alist)
+					  filename-remap-alist))))
+
+     (unless (and filename (file-readable-p filename))
+
+       (cond
+	;; Is file already listed for ignore?
+	((realgud:file-ignore filename ignore-re-file-list)
+	 (message "tracking ignored for %s" filename))
+
+	;; Do we want to black-list this?
+	((y-or-n-p (format "Black-list file %s for location tracking?" filename))
+	 ;; FIXME: there has to be a simpler way to set ignore-file-list
+	 (with-current-buffer cmdbuf
+	   (push filename ignore-re-file-list)
+	   (realgud-cmdbuf-info-ignore-re-file-list= ignore-re-file-list))
+	 (setq filename nil)
+	 )
+
+	;; Do we have a custom find-file function?
+	(find-file-fn
+	 (setq filename (funcall find-file-fn cmd-marker filename directory)))
+
+	(t
+	 (let ((found-file (funcall realgud-file-find-function (point-marker) filename directory)))
+	   (if found-file
+	       (progn
+		 (setq remapped-filename (buffer-file-name found-file))
+		 (when (and remapped-filename (file-exists-p remapped-filename))
+		   (realgud-cmdbuf-filename-remap-alist=
+		    (cons
+		     (cons filename remapped-filename)
+		     filename-remap-alist)
+		    cmdbuf)
+		   (setq filename remapped-filename)
+		   ))
+	     ;; else
+	     (setq filename nil)
+	     )))
+	)))
+  ;;)
+
   (if filename
       (if (file-readable-p filename)
 	  (if (integerp line-number)
@@ -120,6 +161,9 @@ problem as best as we can determine."
 								    source-text))
 				   (source-buffer (find-file-noselect filename))
 				   (source-mark))
+
+			      ;; Set this filename as the last one seen in cmdbuf
+			      (realgud-cmdbuf-info-source-path= filename)
 
 			      ;; And you thought we'd never get around to
 			      ;; doing something other than validation?
@@ -144,7 +188,23 @@ problem as best as we can determine."
 		(format "line number %s should be greater than 0" line-number))
 	    (format "%s is not an integer" line-number))
 	;; else
-	(format "File named `%s' not readable" filename)))
+	(if filename
+	    (format "File named `%s' not readable" filename))))
   )
+
+;; FIXME: should allow column number to be passed in.
+(defun realgud:file-remove-ignore(path-to-stop-ignoring)
+  "Remove `path-to-stop-ignoring' from the list of paths which
+are ignored in debugger location tracking. You might do this if you accidentllay
+added a a path for ignoring by mistake."
+  (interactive
+   (list (completing-read "File name to stop ignoring: "
+		    (realgud-cmdbuf-ignore-re-path-list (current-buffer))
+		    nil t)))
+  (when (member path-to-stop-ignoring (realgud-cmdbuf-ignore-re-file-list (current-buffer)))
+    (realgud-cmdbuf-info-ignore-re-path-list=
+     (delete path-to-stop-ignoring (realgud-cmdbuf-ignore-re-file-list (current-buffer)))))
+  )
+
 
 (provide-me "realgud-")

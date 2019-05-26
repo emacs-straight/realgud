@@ -2,7 +2,7 @@
 
 ;; Author: Rocky Bernstein <rocky@gnu.org>
 
-;; Copyright (C) 2015-2017 Free Software Foundation, Inc
+;; Copyright (C) 2015-2017, 2019 Free Software Foundation, Inc
 
 ;; This program is free software: you can redistribute it and/or
 ;; modify it under the terms of the GNU General Public License as
@@ -25,11 +25,11 @@
 (require-relative-list
  '("../key" "helper" "../follow" "../loc") "realgud-")
 
-(require-relative-list
- '("command") "realgud-buffer-")
+(require-relative-list '("command") "realgud-buffer-")
 
 (declare-function realgud-cmdbuf-debugger-name        'realgud-buffer-command)
 (declare-function realgud-cmdbuf?                     'realgud-buffer-command)
+(declare-function realgud-cmdbuf-info-bt-buf=         'realgud-buffer-command)
 (declare-function realgud-cmdbuf-info-divert-output?= 'realgud-buffer-command)
 (declare-function realgud-backtrace-mode (cmdbuf))
 (declare-function realgud:cmd-backtrace (arg))
@@ -83,7 +83,7 @@
 	  (frame)
 	  (loc)
 	  (i 0))
-      (switch-to-buffer (get-buffer-create "*Describe*"))
+      (switch-to-buffer (get-buffer-create "*Describe Backtrace*"))
       (while (and (< i (ring-length frames)) (setq frame (ring-ref frames i)))
 	(insert (format "*** %d\n" i))
 	(insert (format "%s\n" frame))
@@ -106,14 +106,14 @@
   	(process)
   	)
     (with-current-buffer-safe cmdbuf
-      (let ((frame-pat (realgud-cmdbuf-pat "debugger-backtrace"))
+      (let ((backtrace-pat (realgud-cmdbuf-pat "debugger-backtrace"))
 	    (indicator-re (or (realgud-cmdbuf-pat "selected-frame-indicator")
 			      "->"))
 	    (selected-frame-num)
 	    (frame-pos-ring)
 	    (sleep-count 0)
 	    )
-	(unless frame-pat
+	(unless backtrace-pat
 	  (error "No 'debugger-backtrace' regular expression recorded for debugger %s"
 		 (realgud-cmdbuf-debugger-name)))
 	(setq process (get-buffer-process (current-buffer)))
@@ -143,7 +143,7 @@
 	      (if divert-string
 		  (let* ((triple
 			  (realgud:backtrace-add-text-properties
-			   frame-pat cmdbuf divert-string indicator-re))
+			   backtrace-pat cmdbuf divert-string indicator-re))
 			 (string-with-props
 			  (ansi-color-filter-apply (car triple)))
 			 (frame-num-pos-list (cl-caddr triple))
@@ -386,7 +386,7 @@ non-digit will start entry number from the beginning again."
       (setq realgud-goto-entry-acc ""))
   (realgud-goto-frame-n-internal (this-command-keys)))
 
-(defun realgud:backtrace-add-text-properties(frame-pat cmdbuf &optional opt-string
+(defun realgud:backtrace-add-text-properties(backtrace-pat cmdbuf &optional opt-string
 						       frame-indicator-re)
   "Parse OPT-STRING or the current buffer and add frame properties: frame number,
 filename, line number, whether the frame is selected as text properties."
@@ -395,10 +395,10 @@ filename, line number, whether the frame is selected as text properties."
 		    (buffer-substring (point-min) (point-max))
 		    ))
 	 (stripped-string (ansi-color-filter-apply string))
-	 (frame-regexp (realgud-loc-pat-regexp frame-pat))
-	 (frame-group-pat (realgud-loc-pat-num frame-pat))
-	 (file-group-pat (realgud-loc-pat-file-group frame-pat))
-	 (line-group-pat (realgud-loc-pat-line-group frame-pat))
+	 (frame-regexp (realgud-loc-pat-regexp backtrace-pat))
+	 (frame-group-pat (realgud-loc-pat-num backtrace-pat))
+	 (file-group-pat (realgud-loc-pat-file-group backtrace-pat))
+	 (line-group-pat (realgud-loc-pat-line-group backtrace-pat))
 	 (alt-frame-num -1)
 	 (last-pos 0)
 	 (selected-frame-num nil)

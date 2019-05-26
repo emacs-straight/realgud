@@ -1,4 +1,4 @@
-;; Copyright (C) 2015-2017 Free Software Foundation, Inc
+;; Copyright (C) 2015-2019 Free Software Foundation, Inc
 
 ;; Author: Rocky Bernstein <rocky@gnu.org>
 
@@ -88,8 +88,19 @@
 (make-variable-buffer-local  (defvar realgud-track-mode))
 (fn-p-to-fn?-alias 'realgud-loc-p)
 
-(defvar realgud-track-divert-string)
-(defvar starting-directory)
+(defvar realgud-track-divert-string
+  ""
+  "Some commands need information from the debugger to perform certain actions, such as show what breapoints exist, give back trace information. The output of debugger commands which need to be captured, are stored in this buffer-local string variable.")
+
+(defvar starting-directory
+  nil
+  "When set this indicates the base directory that source code path should be based off of when the path is a relative path."
+  )
+
+
+(defvar realgud-command-name-hash
+  nil
+  "This buffer-local hash maps a debugger, like `gdb', or `pdb', to a hash table which describes how to implement generic debugger functions into the commands of that debugger. This information is set up by individual `init' function of the debugger. The keys at any given time will be those debuggers that have been used so far in the Emacs session.")
 
 (defun realgud-track-comint-output-filter-hook(text)
   "An output-filter hook custom for comint shells.  Find
@@ -425,8 +436,7 @@ encountering a new loc."
   )
 
 (defun realgud-track-loc(text cmd-mark &optional opt-regexp opt-file-group
-			   opt-line-group no-warn-on-no-match?
-			   opt-ignore-file-re)
+			   opt-line-group no-warn-on-no-match?)
   "Do regular-expression matching to find a file name and line number inside
 string TEXT. If we match, we will turn the result into a realgud-loc struct.
 Otherwise return nil."
@@ -450,8 +460,6 @@ Otherwise return nil."
 	   (alt-file-group (realgud-sget 'cmdbuf-info 'alt-file-group))
 	   (alt-line-group (realgud-sget 'cmdbuf-info 'alt-line-group))
 	   (text-group (realgud-sget 'cmdbuf-info 'text-group))
-	   (ignore-file-re (or opt-ignore-file-re
-			       (realgud-sget 'cmdbuf-info 'ignore-file-re)))
 	   (callback-loc-fn (realgud-sget 'cmdbuf-info 'callback-loc-fn))
 	   )
 	(if loc-regexp
@@ -470,10 +478,10 @@ Otherwise return nil."
 		  (when source-str
 		    (setq source-str (ansi-color-filter-apply
 				      source-str)))
-		  (cond (callback-loc-fn
+		  (cond ((and nil callback-loc-fn)
 			 (funcall callback-loc-fn text
 				  filename lineno source-str
-				  ignore-file-re cmd-mark))
+				  cmd-mark directory))
 			('t
 			 (unless line-str
 			   (message "line number not found -- using 1"))
@@ -481,7 +489,6 @@ Otherwise return nil."
 			     (realgud:file-loc-from-line filename lineno
 							 cmd-mark
 							 source-str nil
-							 ignore-file-re
 							 nil
 							 directory
 							 )
@@ -495,8 +502,8 @@ Otherwise return nil."
     )
   )
 
-(defun realgud-track-bp-loc(text &optional cmd-mark cmdbuf ignore-file-re)
-  "Do regular-expression matching to find a file name and line number inside
+(defun realgud-track-bp-loc(text &optional cmd-mark cmdbuf opt-ignore-re-file-list)
+   "Do regular-expression matching to find a file name and line number inside
 string TEXT. If we match, we will turn the result into a realgud-loc struct.
 Otherwise return nil. CMD-MARK is set in the realgud-loc object created.
 "
@@ -511,80 +518,126 @@ Otherwise return nil. CMD-MARK is set in the realgud-loc object created.
   (with-current-buffer cmdbuf
     (unless (realgud:track-complain-if-not-in-cmd-buffer cmdbuf t)
       (let* ((loc-pat (realgud-cmdbuf-pat "brkpt-set"))
-	     (shortkey-mode? (realgud-sget 'cmdbuf-info 'src-shortkey?)))
-	(if loc-pat
-	    (let ((bp-num-group   (realgud-loc-pat-num loc-pat))
+	     (shortkey-mode? (realgud-sget 'cmdbuf-info 'src-shortkey?))
+	     (found-loc nil)
+	     (loc-pat-list loc-pat))
+	(unless (listp loc-pat-list)
+	  (setq loc-pat-list (list loc-pat)))
+	(while loc-pat-list
+	  (setq loc-pat (car loc-pat-list))
+	  (setq loc-pat-list (cdr loc-pat-list))
+	  (let ((bp-num-group   (realgud-loc-pat-num loc-pat))
 		  (loc-regexp     (realgud-loc-pat-regexp loc-pat))
 		  (file-group     (realgud-loc-pat-file-group loc-pat))
 		  (line-group     (realgud-loc-pat-line-group loc-pat))
 		  (text-group     (realgud-loc-pat-text-group loc-pat))
-		  (ignore-file-re (realgud-loc-pat-ignore-file-re loc-pat))
+		  (column-group   (realgud-loc-pat-column-group loc-pat))
+		  (ignore-re-file-list (or opt-ignore-re-file-list
+					   (realgud-sget 'cmdbuf-info 'ignore-re-file-list)))
 		  (callback-loc-fn (realgud-sget 'cmdbuf-info 'callback-loc-fn))
 		    )
 	      (if loc-regexp
 		  (if (string-match loc-regexp text)
-		      (let* ((bp-num (match-string bp-num-group text))
-			     (filename (match-string file-group text))
+		      (let* ((bp-num (and bp-num-group (match-string bp-num-group text)))
+			     (filename
+			      (if file-group
+				  (match-string file-group text)
+				(realgud-sget 'cmdbuf-info 'source-path)
+				))
 			     (line-str (match-string line-group text))
 			     (source-str (and text-group (match-string text-group text)))
 			     (lineno (string-to-number (or line-str "1")))
+			     (column-str (and column-group (match-string column-group text)))
+			     (column (string-to-number (or column-str "1")))
+			     (directory
+			      (cond ((boundp 'starting-directory) starting-directory)
+				    (t nil)))
 			     )
 			(cond (callback-loc-fn
-			       (funcall callback-loc-fn text
-					filename lineno source-str
-					ignore-file-re cmd-mark))
+			       (if (setq found-loc (funcall callback-loc-fn text
+							 filename lineno source-str
+							 cmd-mark directory column))
+				   ;; FIXME: dry with code in realgud-track-bp-file-line
+				   (let ((bp-list (realgud-sget 'cmdbuf-info 'bp-list))
+					 srcbuf)
 
-			      ('t
+				     ;; Add src buffer mentioned and set it possibly to go into shortkey mode
+				     (setq srcbuf (realgud-loc-goto found-loc))
+				     (realgud-cmdbuf-add-srcbuf srcbuf cmdbuf)
+				     (realgud-srcbuf-init-or-update srcbuf cmdbuf)
+				     (with-current-buffer srcbuf
+				       (realgud-short-key-mode-setup
+					(or realgud-short-key-on-tracing? shortkey-mode?)
+					))
+
+				     ;; Add breakpoint to list of breakpoints
+				     (with-current-buffer-safe (marker-buffer (realgud-loc-marker found-loc))
+				       (realgud-bp-add-info found-loc))
+
+				     (unless (member found-loc bp-list)
+				       (realgud-cmdbuf-info-bp-list= (cons found-loc bp-list)))
+				     )
+				 (setq loc-pat-list nil)))
+			      (t
 			       (unless line-str
 				 (message "line number not found -- using 1"))
-			       (if (and filename lineno)
-				   (let* ((directory
-					   (cond ((boundp 'starting-directory) starting-directory)
-						 (t nil)))
-					  (srcbuf)
-					  (loc-or-error
-					   (realgud:file-loc-from-line
-					    filename lineno
-					    cmd-mark
-					    source-str
-					    (string-to-number bp-num)
-					    ignore-file-re nil directory
-					    )))
-				     (if (stringp loc-or-error)
-					 (progn
-					   (message loc-or-error)
-					   ;; set to return nil
-					   nil)
-				       ;; else
-				       (let ((loc loc-or-error)
-					     (bp-list (realgud-sget 'cmdbuf-info 'bp-list)))
+			       (if (setq found-loc
+					 (realgud-track-bp-file-line cmd-mark cmdbuf filename lineno source-str bp-num directory column shortkey-mode?))
+				   (setq loc-pat-list nil)))
 
-					 ;; Add src buffer mentioned and set it possibly to go into shortkey mode
-					 (setq srcbuf (realgud-loc-goto loc))
-					 (realgud-cmdbuf-add-srcbuf srcbuf cmdbuf)
-					 (realgud-srcbuf-init-or-update srcbuf cmdbuf)
-					 (with-current-buffer srcbuf
-					   (realgud-short-key-mode-setup
-					    (or realgud-short-key-on-tracing? shortkey-mode?)
-					    ))
+			      )
+			)
+		    ))))
+	found-loc)
+      )))
 
-					 ;; Add breakpoint to list of breakpoints
-					 (with-current-buffer-safe (marker-buffer (realgud-loc-marker loc))
-								   (realgud-bp-add-info loc))
+(defun realgud-track-bp-file-line(cmd-mark cmdbuf filename lineno source-str bp-num directory column shortkey-mode?)
+  (if (and filename lineno)
+      (let* ((directory
+	      (cond ((boundp 'starting-directory) starting-directory)
+		    (t nil)))
+	     (srcbuf)
+	     (found-loc nil)
+	     (loc-or-error
+	      (realgud:file-loc-from-line
+	       filename lineno
+	       cmd-mark
+	       source-str
+	       (string-to-number bp-num)
+	       nil directory
+	       )))
+	(if (stringp loc-or-error)
+	    (progn
+	      (message loc-or-error)
+	      ;; set to return nil
+	      (setq found-loc nil))
+	  ;; else
+	  (let ((loc loc-or-error)
+		(bp-list (realgud-sget 'cmdbuf-info 'bp-list)))
 
-					 (unless (member loc bp-list)
-					   (realgud-cmdbuf-info-bp-list= (cons loc bp-list)))
+	    ;; Add src buffer mentioned and set it possibly to go into shortkey mode
+	    (setq srcbuf (realgud-loc-goto loc))
+	    (realgud-cmdbuf-add-srcbuf srcbuf cmdbuf)
+	    (realgud-srcbuf-init-or-update srcbuf cmdbuf)
+	    (with-current-buffer srcbuf
+	      (realgud-short-key-mode-setup
+	       (or realgud-short-key-on-tracing? shortkey-mode?)
+	       ))
 
-					 ;; Set to return location
-					 loc-or-error))))
-			       nil))))
-		nil))
-	  nil))
-      )
-    )
-  )
+	    ;; Add breakpoint to list of breakpoints
+	    (with-current-buffer-safe (marker-buffer (realgud-loc-marker loc))
+	      (realgud-bp-add-info loc))
 
-(defun realgud-track-bp-delete(text &optional cmd-mark cmdbuf ignore-file-re)
+	    (realgud-cmdbuf-info-bp-list= (delete-dups (cl-adjoin loc bp-list :test #'equal)))
+
+	    ;; Set to return location
+	    (setq found-loc loc-or-error)
+	  ))
+    found-loc
+    )))
+
+
+(defun realgud-track-bp-delete(text &optional cmd-mark cmdbuf ignore-re-file-list)
   "Do regular-expression matching to see if a breakpoint has been
 deleted inside string TEXT. Return a list of breakpoint locations
 of the breakpoints found in command buffer."
@@ -690,13 +743,13 @@ loc-regexp pattern"
 
 
 (defun realgud-track-loc-from-selected-frame(text cmd-mark &optional
-						  opt-regexp opt-ignore-file-re)
+						  opt-regexp opt-ignore-re-file-list)
   "Return a selected frame number found in TEXT or nil if none found."
   (if (realgud-cmdbuf?)
       (let ((selected-frame-pat (realgud-cmdbuf-pat "selected-frame"))
 	    (frame-num-regexp)
-	    (ignore-file-re (or opt-ignore-file-re
-				(realgud-sget 'cmdbuf-info 'ignore-file-re))))
+	    (ignore-re-file-list (or opt-ignore-re-file-list
+				(realgud-sget 'cmdbuf-info 'ignore-re-file-list))))
 	(if (and selected-frame-pat
 		 (setq frame-num-regexp (realgud-loc-pat-regexp
 					 selected-frame-pat)))
@@ -707,7 +760,7 @@ loc-regexp pattern"
 		       (lineno (string-to-number (match-string line-group text))))
 		  (if (and filename lineno)
 		      (realgud:file-loc-from-line filename lineno
-						  cmd-mark nil nil ignore-file-re)
+						  cmd-mark nil nil)
 		    nil))
 	      nil)
 	  nil))
@@ -781,7 +834,6 @@ find a location. non-nil if we can find a location.
 				(realgud-loc-pat-file-group loc-pat)
 				(realgud-loc-pat-line-group loc-pat)
 				nil
-				(realgud-loc-pat-ignore-file-re loc-pat)
 				))
       (if (stringp loc)
 	  (message loc)

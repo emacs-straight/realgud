@@ -1,13 +1,13 @@
 ;;; realgud.el --- A modular front-end for interacting with external debuggers
 
 ;; Author: Rocky Bernstein <rocky@gnu.org>
-;; Version: 1.4.5
+;; Version: 1.4.8
 ;; Package-Type: multi
 ;; Package-Requires: ((load-relative "1.2") (loc-changes "1.2") (test-simple  "1.2.0") (cl-lib "0.5") (emacs "24"))
 ;; URL: http://github.com/realgud/realgud/
-;; Keywords: gdb, python, perl, go, bash, nodejs, zsh, bashdb, zshdb, remake, make, trepan, perldb, pdb
+;; Keywords: debugger, gdb, python, perl, go, bash, nodejs, zsh, bashdb, zshdb, remake, trepan, perldb, pdb
 
-;; Copyright (C) 2015-2018 Free Software Foundation, Inc
+;; Copyright (C) 2015-2019 Free Software Foundation, Inc
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -91,7 +91,10 @@
   (progn
     (require-relative-list
      '(
+       "./realgud/common/attach"
        "./realgud/common/track-mode"
+       "./realgud/common/backtrack-mode"
+       "./realgud/common/breakpoint-mode"
        "./realgud/common/utils"
        "./realgud/debugger/bashdb/bashdb"
        "./realgud/debugger/gdb/gdb"

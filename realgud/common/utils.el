@@ -1,4 +1,4 @@
-;; Copyright (C) 2016-2017 Free Software Foundation, Inc
+;; Copyright (C) 2016-2018 Free Software Foundation, Inc
 
 ;; Author: Rocky Bernstein <rocky@gnu.org>
 
@@ -46,10 +46,10 @@
     - 'comint if the major comint-mode or shell-mode
 Or raise an error if neither."
 
-  (cond ((eq major-mode 'eshell-mode)
-	'eshell)
-	((or (eq major-mode 'comint-mode) (eq major-mode 'shell-mode))
-	  'comint)
+  (cond ((derived-mode-p 'eshell-mode)
+	 'eshell)
+	((derived-mode-p 'comint-mode)
+	 'comint)
 	('t (error "We can only handle comint, shell, or eshell buffers"))
 	))
 
@@ -60,7 +60,7 @@ prompts and interactive output with"
   (add-to-list
    'comint-preoutput-filter-functions
    (lambda (output)
-     (replace-regexp-in-string "\033\\[[0-9]*[GKJhl]" "" output)))
+     (replace-regexp-in-string "\033\\[[0-9]*[CDGKJhl]" "" output)))
   )
 
 

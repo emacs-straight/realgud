@@ -1,4 +1,4 @@
-;; Copyright (C) 2010, 2011, 2016 Free Software Foundation, Inc
+;; Copyright (C) 2010-2011, 2016, 2018 Free Software Foundation, Inc
 
 ;; Author: Rocky Bernstein <rocky@gnu.org>
 
@@ -16,7 +16,7 @@
 (require-relative-list '("../../lang/ruby") "realgud-lang-")
 
 (defvar realgud-pat-hash)
-(declare-function make-realgud-loc-pat (realgud-loc))
+(declare-function make-realgud-loc-pat 'realgud-regexp)
 
 (defvar realgud-rdebug-pat-hash (make-hash-table :test 'equal)
   "Hash key is the what kind of pattern we want to match:
@@ -33,8 +33,15 @@ realgud-loc-pat struct")
        :regexp "\\(?:source \\)?\\(\\(?:[a-zA-Z]:\\)?\\(?:.+\\)\\):\\([0-9]+\\).*\\(?:\n\\|$\\)"
        :file-group 1
        :line-group 2
-       :ignore-file-re  "(eval)"
       ))
+
+;; An initial list of regexps that don't generally have files
+;; associated with them and therefore we should not try to find file
+;; associations for them.  This list is used to seed a field of the
+;; same name in the cmd-info structure inside a command buffer. A user
+;; may add additional files to the command-buffer's re-ignore-list.
+(setf (gethash "ignore-re-file-list" realgud-rdebug-pat-hash)
+      '("(eval)"))
 
 ;; Regular expression that describes a rdebug command prompt
 ;; For example:

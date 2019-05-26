@@ -1,4 +1,4 @@
-;; Copyright (C) 2010-2011, 2016-2017 Free Software Foundation, Inc
+;; Copyright (C) 2010-2011, 2016-2017, 2019 Free Software Foundation, Inc
 
 ;; Author: Rocky Bernstein <rocky@gnu.org>
 
@@ -19,7 +19,7 @@
 (require-relative-list '("../../lang/posix-shell") "realgud-lang-")
 
 (defvar realgud-pat-hash)
-(declare-function make-realgud-loc-pat (realgud-loc))
+(declare-function make-realgud-loc-pat 'realgud-regexp)
 
 (defvar realgud:kshdb-pat-hash (make-hash-table :test 'equal)
   "Hash key is the what kind of pattern we want to match:
@@ -49,21 +49,27 @@ realgud-loc-pat struct")
        :num 1
        ))
 
-;;  Regular expression that describes a "breakpoint set" line
+;;  realgud-loc-pat that describes a "breakpoint set" line
 (setf (gethash "brkpt-set" realgud:kshdb-pat-hash)
-      (make-realgud-loc-pat
-       :regexp "^Breakpoint \\([0-9]+\\) set in file \\(.+\\), line \\([0-9]+\\).\n"
-       :num 1
-       :file-group 2
-       :line-group 3))
+      realgud:POSIX-debugger-brkpt-set-pat)
 
-;; Regular expression that describes a debugger "delete" (breakpoint) response.
+;; realgud-loc-pat that describes a debugger "delete" (breakpoint) response.
 ;; For example:
-;;   Removed 1 breakpoint(s).
+;;   Deleted breakpoint 1.
 (setf (gethash "brkpt-del" realgud:kshdb-pat-hash)
-      (make-realgud-loc-pat
-       :regexp "^Removed \\([0-9]+\\) breakpoints(s).\n"
-       :num 1))
+      realgud:POSIX-debugger-brkpt-del-pat)
+
+;; realgud-loc-pat that describes a debugger "disable" (breakpoint) response.
+;; For example:
+;;   Breakpoint entry 4 disabled.
+(setf (gethash "brkpt-disable" realgud:kshdb-pat-hash)
+      realgud:POSIX-debugger-brkpt-disable-pat)
+
+;; realgud-loc-pat that describes a debugger "enable" (breakpoint) response.
+;; For example:
+;;   Breakpoint entry 4 enabled.
+(setf (gethash "brkpt-enable" realgud:kshdb-pat-hash)
+      realgud:POSIX-debugger-brkpt-enable-pat)
 
 ;; Regular expression that describes a debugger "backtrace" command line.
 ;; For example:
@@ -71,45 +77,27 @@ realgud-loc-pat struct")
 ;;   ##1 /etc/apparmor/fns called from file `/etc/init.d/apparmor' at line 35
 ;;   ##2 /etc/init.d/apparmor called from file `/usr/bin/kshdb' at line 129
 (setf (gethash "debugger-backtrace" realgud:kshdb-pat-hash)
-      (make-realgud-loc-pat
-       :regexp 	(concat realgud-shell-frame-start-regexp
-			realgud-shell-frame-num-regexp "[ ]?"
-			"\\(.*\\)"
-			realgud-shell-frame-file-regexp
-			"\\(?:" realgud-shell-frame-line-regexp "\\)?"
-			)
-       :num 2
-       :file-group 4
-       :line-group 5)
-      )
+      realgud:POSIX-debugger-backtrace-pat)
+
+;; FIXME breakpoints aren't locations. It should be a different structure
+;; realgud-loc that describes a zshdb "info breakpoints" line.
+(setf (gethash "debugger-breakpoint" realgud:kshdb-pat-hash)
+      realgud:POSIX-debugger-backtrace-pat)
 
 ;; Regular expression that for a termination message.
 (setf (gethash "termination" realgud:kshdb-pat-hash)
        "^kshdb: That's all, folks...\n")
 
+;; FIXME breakpoints aren't locations. It should be a different structure
+;; realgud-loc that describes a zshdb "info breakpoints" line.
+(setf (gethash "debugger-breakpoint" realgud:kshdb-pat-hash)
+      realgud:POSIX-debugger-breakpoint-pat)
+
 (setf (gethash "font-lock-keywords" realgud:kshdb-pat-hash)
-      '(
-	;; The frame number and first type name, if present.
-	;; E.g. ->0 in file `/etc/init.d/apparmor' at line 35
-	;;      --^-
-	("^\\(->\\|##\\)\\([0-9]+\\) "
-	 (2 realgud-backtrace-number-face))
+      realgud:POSIX-debugger-font-lock-keywords)
 
-	;; File name.
-	;; E.g. ->0 in file `/etc/init.d/apparmor' at line 35
-	;;          ---------^^^^^^^^^^^^^^^^^^^^-
-	("[ \t]+\\(in\\|from\\) file `\\(.+\\)'"
-	 (2 realgud-file-name-face))
-
-	;; File name.
-	;; E.g. ->0 in file `/etc/init.d/apparmor' at line 35
-	;;                                         --------^^
-	;; Line number.
-	("[ \t]+at line \\([0-9]+\\)$"
-	 (1 realgud-line-number-face))
-	;; (trepan-frames-match-current-line
-	;;  (0 trepan-frames-current-frame-face append))
-	))
+(setf (gethash "font-lock-breakpoint-keywords" realgud:kshdb-pat-hash)
+      realgud:POSIX-debugger-font-lock-breakpoint-keywords)
 
 (setf (gethash "kshdb" realgud-pat-hash) realgud:kshdb-pat-hash)
 
@@ -117,10 +105,20 @@ realgud-loc-pat struct")
   "hash key is command name like 'quit' and the value is
   the trepan command to use, like 'quit!'")
 
+(setf (gethash "kshdb" realgud-command-hash) realgud:kshdb-command-hash)
+
 ;; (setf (gethash "quit" realgud:kshdb-command-hash) "quit!")
 
-(setf (gethash "kshdb" realgud-pat-hash) realgud:kshdb-pat-hash)
-(setf (gethash "clear" realgud:kshdb-command-hash) "clear %l")
-(setf (gethash "eval" realgud:kshdb-command-hash) "eval %s")
+
+(setf (gethash "clear"            realgud:kshdb-command-hash) "clear %l")
+(setf (gethash "eval"             realgud:kshdb-command-hash) "eval %s")
+(setf (gethash "info-breakpoints" realgud:kshdb-command-hash) "info breakpoints")
+(setf (gethash "quit"             realgud:kshdb-command-hash) "quit")
+(setf (gethash "until"            realgud:kshdb-command-hash) "continue %l")
+
+;; Unsupported features:
+(setf (gethash "jump"   realgud:kshdb-command-hash) "*not-implemented*")
+(setf (gethash "finish" realgud:kshdb-command-hash) "*not-implemented*")
+(setf (gethash "jump"   realgud:kshdb-command-hash) "*not-implemented*")
 
 (provide-me "realgud:kshdb-")

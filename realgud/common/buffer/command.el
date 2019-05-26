@@ -1,4 +1,4 @@
-;; Copyright (C) 2015-2018 Free Software Foundation, Inc
+;; Copyright (C) 2015-2019 Free Software Foundation, Inc
 ;; Author: Rocky Bernstein <rocky@gnu.org>
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -32,6 +32,11 @@
   (defvar realgud-cmdbuf-info)
   )
 (require 'cl-lib)
+
+(when (< emacs-major-version 26)
+  (defun make-mutex(&rest name)
+    ;; Stub for Emacs that doesn't have mutex
+    ))
 
 (defface debugger-running
   '((((class color) (min-colors 16) (background light))
@@ -76,7 +81,10 @@
                        ;; this debugger. Eventually loc-regexp, file-group
                        ;; and line-group below will removed and stored here.
   srcbuf-list          ;; list of source buffers we have stopped at
+  source-path          ;; last source-code path we've seen
+
   bt-buf               ;; backtrace buffer if it exists
+  brkpt-buf            ;; breakpoint buffer if it exists
   bp-list              ;; list of breakpoints
   divert-output?       ;; Output is part of a conversation between front-end
                        ;; debugger.
@@ -90,7 +98,6 @@
                        ;; when evaluating an expression. For example,
                        ;; some trepan debuggers expression values prefaced with:
                        ;; $DB::D[0] =
-
   ;; FIXME: REMOVE THIS and use regexp-hash
   loc-regexp   ;; Location regular expression string
   file-group
@@ -98,7 +105,36 @@
   alt-file-group
   alt-line-group
   text-group
-  ignore-file-re
+
+  ;; A list (or sequence) of regular expression strings of file names
+  ;; that we should ignore.
+  ;;
+  ;; For example in Python debuggers it often starts out "<string>...", while
+  ;; in Ruby and Perl it often starts out "(eval ...".
+  ;;
+  ;; However in this list could be individual files that one encounters in the
+  ;; course of debugging. For example:
+  ;; - in nodejs "internal/module.js" or more generally internal/.*\.js.
+  ;; - in C ../sysdeps/x86_64/multiarch/strchr-avx2.S or or more generally .*/sysdeps/.*
+  ;; and so on.
+  ;;
+  ;; A list of regular expression. When one in the list matches a source
+  ;; location, we ignore that file. Of course, the regular expression could
+  ;; be a specific file name. Various programming languages have names
+  ;; that might not be real. For example, in Python or Ruby when you compile
+  ;; a or evaluate string you provide a name in the call, and often times
+  ;; this isn't the real name of a file. It is often something like "exec" or
+  ;; "<string>", or "<eval>". Each of the debuggers has the opportunity to seed the
+  ;; the ignore list.
+  ignore-re-file-list
+
+  ;; A property list which maps the name as seen in the location to a path that we
+  ;; can do a "find-file" on
+  filename-remap-alist
+
+  ;; A mutex to ensure that two threads doing things in the same debug
+  ;; session simultaneously
+  mutex
 
   loc-hist     ;; ring of locations seen in the course of execution
                ;; see realgud-lochist
@@ -113,6 +149,7 @@
 ;; FIXME: figure out how to put in a loop.
 (realgud-struct-field-setter "realgud-cmdbuf-info" "bp-list")
 (realgud-struct-field-setter "realgud-cmdbuf-info" "bt-buf")
+(realgud-struct-field-setter "realgud-cmdbuf-info" "brkpt-buf")
 (realgud-struct-field-setter "realgud-cmdbuf-info" "cmd-args")
 (realgud-struct-field-setter "realgud-cmdbuf-info" "last-input-end")
 (realgud-struct-field-setter "realgud-cmdbuf-info" "divert-output?")
@@ -121,10 +158,17 @@
 (realgud-struct-field-setter "realgud-cmdbuf-info" "no-record?")
 (realgud-struct-field-setter "realgud-cmdbuf-info" "prior-prompt-regexp")
 (realgud-struct-field-setter "realgud-cmdbuf-info" "src-shortkey?")
+(realgud-struct-field-setter "realgud-cmdbuf-info" "source-path")
 (realgud-struct-field-setter "realgud-cmdbuf-info" "in-debugger?")
 (realgud-struct-field-setter "realgud-cmdbuf-info" "callback-loc-fn")
 (realgud-struct-field-setter "realgud-cmdbuf-info" "callback-eval-filter")
 (realgud-struct-field-setter "realgud-cmdbuf-info" "starting-directory")
+(realgud-struct-field-setter "realgud-cmdbuf-info" "ignore-re-file-list")
+;; (realgud-struct-field-setter "realgud-cmdbuf-info" "filename-remap-alist")
+
+(defun realgud-cmdbuf-filename-remap-alist= (value &optional buffer)
+  (setq buffer (realgud-get-cmdbuf buffer))
+  (setf (realgud-cmdbuf-info-filename-remap-alist realgud-cmdbuf-info) value))
 
 (defun realgud:cmdbuf-follow-buffer(event)
   (interactive "e")
@@ -140,7 +184,7 @@
 	 (filename)
 	 (remapped-filename)
 	 )
-    (insert "** Source Buffers Seen (srcbuf-list)\n")
+    (insert "* Source Buffers Seen (srcbuf-list)\n")
 
     (dolist (buffer buffer-list)
       (insert "  - ")
@@ -159,13 +203,18 @@
 ;; FIXME: this is a cheat. We are inserting
 ;; and afterwards inserting ""
 (defun realgud:cmdbuf-bp-list-describe (info)
-  (let ((bp-list (realgud-cmdbuf-info-bp-list info)))
+  (let ((bp-list (realgud-cmdbuf-info-bp-list info))
+	;; For reasons I don't understand bp-list has duplicates
+	(bp-nums nil))
     (cond (bp-list
-	   (insert "** Breakpoint list (bp-list)\n")
+	   (insert "* Breakpoint list (bp-list)\n")
 	   (dolist (loc bp-list "")
 	     (let ((bp-num (realgud-loc-num loc)))
-	       (insert (format "*** Breakpoint %d\n" bp-num))
-	       (realgud:org-mode-append-loc loc))))
+	       (when (and bp-num (not (cl-member bp-num bp-nums)))
+		 (insert (format "** Breakpoint %d\n" bp-num))
+		 (realgud:org-mode-append-loc loc)
+		 (setq bp-nums (cl-adjoin bp-num bp-nums))
+	       ))))
 	  ;; Since we are inserting, the below in fact
 	  ;; inserts nothing. The string return is
 	  ;; aspirational for when this is fixed
@@ -191,21 +240,25 @@
   "Return an  org-mode representation of HASH-TABLE as a s."
   (format "%s"
 	  (json-join
-	   (let (r)
-	     (maphash
-	      (lambda (k v)
-		(push (format
-		       "  - %s\t::\t%s" k (realgud:org-mode-encode v ""))
-		      r))
-	      hash-table)
-	     r)
-	   "")))
+	   (sort (realgud:org-mode-encode-htable-1 hash-table)
+		 'string<) "")))
+
+(defun realgud:org-mode-encode-htable-1 (hash-table)
+  "Return an  org-mode representation of HASH-TABLE as a s."
+  (let (r)
+    (maphash
+     (lambda (k v)
+       (push (format
+	      "  - %s\t::\t%s" k (realgud:org-mode-encode v ""))
+	     r))
+     hash-table)
+    r))
 
 (defun realgud:cmdbuf-info-describe (&optional buffer)
   "Display realgud-cmdcbuf-info fields of BUFFER.
 BUFFER is either a debugger command or source buffer. If BUFFER is not given
 the current buffer is used as a starting point.
-Information is put in an internal buffer called *Describe*."
+Information is put in an internal buffer called *Describe Debugger Session*."
   (interactive "")
   (setq buffer (realgud-get-cmdbuf buffer))
   (if buffer
@@ -214,7 +267,7 @@ Information is put in an internal buffer called *Describe*."
 	      (cmdbuf-name (buffer-name)))
 	  (if info
 	      (progn
-		(switch-to-buffer (get-buffer-create "*Describe*"))
+		(switch-to-buffer (get-buffer-create "*Describe Debugger Session*"))
 		(setq buffer-read-only 'nil)
 		(delete-region (point-min) (point-max))
 		;;(insert "#+OPTIONS:    H:2 num:nil toc:t \\n:nil ::t |:t ^:nil -:t f:t *:t tex:t d:(HIDE) tags:not-in-toc\n")
@@ -223,8 +276,8 @@ Information is put in an internal buffer called *Describe*."
 This is based on an org-mode buffer. Hit tab to expand/contract sections.
 \n"
 				cmdbuf-name))
-		(insert "** General Information (realgud-cmdbuf-info)\n")
-		;; (insert "** General Information (")
+		(insert "* General Information (realgud-cmdbuf-info)\n")
+		;; (insert "* General Information (")
 		;; (insert-text-button
 		;;  "realgud-cmdbuf-info"
 		;;  ;; FIXME figure out how to set buffer to cmdbuf so we get cmdbuf value
@@ -234,24 +287,30 @@ This is based on an org-mode buffer. Hit tab to expand/contract sections.
 
 		(mapc 'insert
 		      (list
-		       (format "  - Debugger name     ::\t%s\n"
+		       (format "  - Debugger name       ::\t%s\n"
 			       (realgud-cmdbuf-info-debugger-name info))
-		       (format "  - Command-line args ::\t%s\n"
+		       (format "  - Command-line args   ::\t%s\n"
 			       (json-encode (realgud-cmdbuf-info-cmd-args info)))
-		       (format "  - Starting directory ::\t%s\n"
+		       (format "  - Starting directory  ::\t%s\n"
 			       (realgud-cmdbuf-info-starting-directory info))
+		       (format "  - Current source-code path  ::\t[[%s]]\n"
+			       (realgud-cmdbuf-info-source-path info))
 		       (format "  - Selected window should contain source? :: %s\n"
 			       (realgud-cmdbuf-info-in-srcbuf? info))
-		       (format "  - Last input end    ::\t%s\n"
+		       (format "  - Last input end      ::\t%s\n"
 			       (realgud-cmdbuf-info-last-input-end info))
 		       (format "  - Source should go into short-key mode? :: %s\n"
 			       (realgud-cmdbuf-info-src-shortkey? info))
-		       (format "  - In debugger?      ::\t%s\n"
+		       (format "  - In debugger?        ::\t%s\n"
 			       (realgud-cmdbuf-info-in-debugger? info))
+		       (format "  - Ignore file regexps ::\t%s\n"
+			       (realgud-cmdbuf-info-ignore-re-file-list info))
+		       (format "  - remapped file names ::\t%s\n"
+			       (realgud-cmdbuf-info-filename-remap-alist info))
 
-		       (realgud:org-mode-encode "\n*** Remap table for debugger commands\n"
+		       (realgud:org-mode-encode "\n** Remap table for debugger commands\n"
 						      (realgud-cmdbuf-info-cmd-hash info))
-		       ;; (realgud:org-mode-encode "\n*** Backtrace buffer"
+		       ;; (realgud:org-mode-encode "\n** Backtrace buffer"
 		       ;; 				(realgud-cmdbuf-info-bt-buf info))
 		       ;; (format "  - Backtrace buffer  ::\t%s\n"
 		       ;;   (realgud-cmdbuf-info-bt-buf info))
@@ -264,9 +323,9 @@ This is based on an org-mode buffer. Hit tab to expand/contract sections.
 		(realgud:loc-hist-describe (realgud-cmdbuf-info-loc-hist info))
 		(insert "
 #+STARTUP: overview
-     #+STARTUP: content
-     #+STARTUP: showall
-     #+STARTUP: showeverything
+#+STARTUP: content
+#+STARTUP: showall
+#+STARTUP: showeverything
 ")
 		(goto-char (point-min))
 		(realgud:info-mode)
@@ -378,36 +437,51 @@ values set in the debugger's init.el."
   (with-current-buffer-safe cmd-buf
     (let ((realgud-loc-pat (gethash "loc" regexp-hash))
 	  (font-lock-keywords)
+	  (font-lock-breakpoint-keywords)
 	  )
       (setq realgud-cmdbuf-info
 	    (make-realgud-cmdbuf-info
-	     :in-srcbuf? nil
 	     :debugger-name debugger-name
              :base-variable-name (or base-variable-name debugger-name)
+	     :cmd-args nil
+	     :frame-switch? nil
+	     :in-srcbuf? nil
+	     :last-input-end (point-max)
+	     :prior-prompt-regexp nil
+	     :no-record? nil
+	     :in-debugger? nil
+	     :src-shortkey? t
+	     :regexp-hash regexp-hash
+	     :srcbuf-list nil
+	     :bt-buf nil
+	     :brkpt-buf nil
+	     :bp-list nil
+	     :divert-output? nil
+	     :cmd-hash cmd-hash
+	     :callback-loc-fn (gethash "loc-callback-fn" regexp-hash)
+	     :callback-eval-filter (gethash "callback-eval-filter"
+					    regexp-hash)
 	     :loc-regexp (realgud-sget 'loc-pat 'regexp)
 	     :file-group (realgud-sget 'loc-pat 'file-group)
 	     :line-group (realgud-sget 'loc-pat 'line-group)
 	     :alt-file-group (realgud-sget 'loc-pat 'alt-file-group)
 	     :alt-line-group (realgud-sget 'loc-pat 'alt-line-group)
 	     :text-group (realgud-sget 'loc-pat 'text-group)
-	     :ignore-file-re (realgud-sget 'loc-pat 'ignore-file-re)
+	     :ignore-re-file-list (gethash "ignore-re-file-list" regexp-hash)
+	     :filename-remap-alist nil
+	     :mutex (make-mutex (buffer-name))
 	     :loc-hist (make-realgud-loc-hist)
-	     :regexp-hash regexp-hash
-	     :bt-buf nil
-	     :last-input-end (point-max)
-	     :cmd-hash cmd-hash
-	     :src-shortkey? t
-	     :in-debugger? nil
-	     :callback-loc-fn (gethash "loc-callback-fn" regexp-hash)
-	     :callback-eval-filter (gethash "callback-eval-filter"
-					    regexp-hash)
+	     :starting-directory starting-directory
 	     ))
       (setq font-lock-keywords (realgud-cmdbuf-pat "font-lock-keywords"))
       (if font-lock-keywords
 	  (set (make-local-variable 'font-lock-defaults)
 	       (list font-lock-keywords)))
+      (setq font-lock-breakpoint-keywords (realgud-cmdbuf-pat "font-lock-breakpoint-keywords"))
+      (if font-lock-breakpoint-keywords
+	  (set (make-local-variable 'font-lock-breakpoint-keywords)
+	       (list font-lock-breakpoint-keywords)))
       )
-
     (put 'realgud-cmdbuf-info 'variable-documentation
 	 "Debugger object for a process buffer."))
   )
@@ -426,6 +500,22 @@ values set in the debugger's init.el."
       nil))
   )
 
+(defun realgud-cmdbuf-mutex (&optional cmd-buf)
+  "Return the mutex for the current command buffer"
+  (with-current-buffer-safe (or cmd-buf (current-buffer))
+    (if (realgud-cmdbuf?)
+	(realgud-sget 'cmdbuf-info 'mutex)
+      nil))
+  )
+
+(defun realgud-cmdbuf-filename-remap-alist (&optional cmd-buf)
+  "Return the file-remap alist the current command buffer"
+  (with-current-buffer-safe (or cmd-buf (current-buffer))
+    (if (realgud-cmdbuf?)
+	(realgud-sget 'cmdbuf-info 'filename-remap-alist)
+      nil))
+  )
+
 (defun realgud-cmdbuf-pat(key)
   "Extract regexp stored under KEY in a realgud-cmdbuf via realgud-cmdbuf-info"
   (if (realgud-cmdbuf?)
@@ -441,6 +531,11 @@ values set in the debugger's init.el."
 command-process buffer has stored."
   (with-current-buffer-safe cmd-buf
     (realgud-sget 'cmdbuf-info 'loc-hist))
+)
+
+(defun realgud-cmdbuf-ignore-re-file-list(cmd-buf)
+  (with-current-buffer-safe cmd-buf
+    (realgud-sget 'cmdbuf-info 'ignore-re-file-list))
 )
 
 (defun realgud-cmdbuf-src-marker(cmd-buf)

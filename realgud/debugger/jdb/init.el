@@ -18,7 +18,7 @@
 (require-relative-list '("../../lang/java") "realgud-lang-")
 
 (defvar realgud-pat-hash)
-(declare-function make-realgud-loc-pat (realgud-loc))
+(declare-function make-realgud-loc-pat 'realgud-regexp)
 
 (defconst realgud:jdb-identifier "[A-Za-z_][A-Za-z0-9_.]+"
 "Regexp string that matches a Java identifier possily with class
@@ -29,7 +29,8 @@ name. For example java.lang.Class.getDeclaredMethods")
 backtrace, prompt, etc.  The values of a hash entry is a
 realgud-loc-pat struct")
 
-(setf (gethash "loc-callback-fn" realgud:jdb-pat-hash) 'realgud:jdb-loc-fn-callback)
+(setf (gethash "loc-callback-fn" realgud:jdb-pat-hash)
+      'realgud:jdb-loc-fn-callback)
 
 ;; realgud-loc-pat that describes a jdb location generally shown
 ;; before a command prompt. For example:
@@ -224,6 +225,8 @@ backtrace listing.")
 (setf (gethash "break"       realgud:jdb-command-hash) "*not-implemented*")
 (setf (gethash "clear"       realgud:jdb-command-hash) "*not-implemented*")
 (setf (gethash "restart"     realgud:jdb-command-hash) "*not-implemented*")
+
+(setf (gethash "info-breakpoints" realgud:jdb-command-hash) "clear")
 
 (setf (gethash "continue"    realgud:jdb-command-hash) "cont")
 (setf (gethash "finish"      realgud:jdb-command-hash) "step up")

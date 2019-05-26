@@ -3,7 +3,7 @@
 /*-pkg.el
 /*.tar.gz
 /.cask/
-/.python-version
+.python-version
 /README
 /aclocal.m4
 /autom4te.cache
@@ -13,6 +13,9 @@
 /configure
 /configure.lineno
 /elpa
+/emacs-load-relative
+/emacs-loc-changes
+/emacs-test-simple
 /how-to-make-a-release.txt
 /install-sh
 /missing

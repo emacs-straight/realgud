@@ -1,4 +1,4 @@
-;; Copyright (C) 2015-2017 Free Software Foundation, Inc
+;; Copyright (C) 2015-2017, 2019 Free Software Foundation, Inc
 
 ;; Author: Rocky Bernstein <rocky@gnu.org>
 
@@ -23,10 +23,10 @@
 (require-relative-list '("../../common/regexp" "../../common/loc") "realgud-")
 
 (defvar realgud-pat-hash)
-(declare-function make-realgud-loc-pat (realgud-loc))
+(declare-function make-realgud-loc-pat 'realgud-regexp)
 
 (defvar realgud:gdb-pat-hash (make-hash-table :test 'equal)
-  "hash key is the what kind of pattern we want to match:
+  "Hash key is the what kind of pattern we want to match:
 backtrace, prompt, etc.  the values of a hash entry is a
 realgud-loc-pat struct")
 
@@ -59,12 +59,21 @@ realgud-loc-pat struct")
 ;; For example:
 ;;   Breakpoint 1, main (argc=1, argv=0x7fffffffdbd8) at main.c:24
 (setf (gethash "brkpt-set" realgud:gdb-pat-hash)
-      (make-realgud-loc-pat
-       :regexp (format "^Breakpoint %s at 0x\\([0-9a-f]*\\): file \\(.+\\), line %s.\n"
-		       realgud:regexp-captured-num realgud:regexp-captured-num)
-       :num 1
-       :file-group 3
-       :line-group 4))
+      (list
+       (make-realgud-loc-pat
+	:regexp (format "^Breakpoint %s at 0x\\([0-9a-f]*\\): file \\(.+\\), line %s[.]\n"
+			realgud:regexp-captured-num realgud:regexp-captured-num)
+	:num 1
+	:file-group 3
+	:line-group 4)
+       ;; Another breakpoint pattern seen
+       (make-realgud-loc-pat
+	:regexp (format "^Breakpoint %s, .* at \\(.+\\):%s[.]\n"
+			realgud:regexp-captured-num realgud:regexp-captured-num)
+	:num 1
+	:file-group 2
+	:line-group 3)
+       ))
 
 ;; Regular expression that describes a debugger "delete" (breakpoint)
 ;; response.
@@ -103,6 +112,25 @@ realgud-loc-pat struct")
        :line-group 3)
       )
 
+;; FIXME breakpoints aren't locations. It should be a different structure
+;; Regular expression that describes a gdb "info breakpoint" line
+;; For example:
+;; 1       breakpoint     keep y   0x0000000000401471 in vcdnav_get_entries at ctest.c:67
+
+(setf (gethash "debugger-breakpoint" realgud:gdb-pat-hash)
+  (make-realgud-loc-pat
+   :regexp (format "^%s[ \t]+\\(breakpoint\\)[ \t]+\\(keep\\|del\\)[ \t]+\\([yn]\\)[ \t]+.*at \\(.+\\):%s"
+		   realgud:regexp-captured-num realgud:regexp-captured-num)
+   :num 1
+   :text-group 2  ;; misnamed Is "breakpoint" or "watchpoint"
+   :string 3      ;; misnamed. Is "keep" or "del"
+   ;; Enable is missing
+   ;; Skipped address
+   :file-group 5
+   :line-group 6)
+  )
+
+
 (setf (gethash "font-lock-keywords" realgud:gdb-pat-hash)
       '(
 	;; #2  0x080593ac in main (argc=2, argv=0xbffff5a4, envp=0xbffff5b0)
@@ -118,6 +146,23 @@ realgud-loc-pat struct")
 	 (1 realgud-backtrace-number-face))
 	))
 
+(setf (gethash "font-lock-breakpoint-keywords" realgud:gdb-pat-hash)
+  '(
+    ;; The breakpoint number, type and disposition
+    ;; 1       breakpoint     keep y   0x0000000000401471 in vcdnav_get_entries at ctest.c:67
+    ;; ^       ^^^^^^^^^^     ^^^^
+    ("^\\([0-9]+\\)[ \t]+\\(breakpoint\\)[ \t]+\\(keep\\|del\\)"
+     (1 realgud-breakpoint-number-face)
+     (2 font-lock-function-name-face nil t)     ; t means optional.
+     (3 font-lock-function-name-face nil t))     ; t means optional.
+
+    ;; 1       breakpoint     keep y   0x0000000000401471 in vcdnav_get_entries at ctest.c:67
+    ;;                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ^^
+    (" in[ \t]+\\(.+*\\):\\([0-9]+\\)"
+     (1 realgud-file-name-face)
+     (2 realgud-line-number-face))
+    ))
+
 (setf (gethash "gdb" realgud-pat-hash) realgud:gdb-pat-hash)
 
 ;;  Prefix used in variable names (e.g. short-key-mode-map) for
@@ -127,7 +172,7 @@ realgud-loc-pat struct")
 
 (defvar realgud:gdb-command-hash (make-hash-table :test 'equal)
   "Hash key is command name like 'continue' and the value is
-  the gdb command to use, like 'continue'")
+the gdb command to use, like 'continue'.")
 
 (setf (gethash "break"    realgud:gdb-command-hash) "break %X:%l")
 (setf (gethash "clear"    realgud:gdb-command-hash) "clear %X:%l")
