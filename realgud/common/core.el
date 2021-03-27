@@ -1,4 +1,4 @@
-;; Copyright (C) 2010-2016 Free Software Foundation, Inc
+;; Copyright (C) 2010-2016, 2020 Free Software Foundation, Inc
 
 ;; Author: Rocky Bernstein <rocky@gnu.org>
 
@@ -29,6 +29,7 @@
 (declare-function realgud-cmdbuf-command-string       'realgud-buffer-command)
 (declare-function realgud-cmdbuf-debugger-name        'realgud-buffer-command)
 (declare-function realgud-cmdbuf-info-bp-list=        'realgud-buffer-command)
+(declare-function realgud-locals-terminate            'realgud-buffer-locals)
 (declare-function realgud-cmdbuf-info-in-debugger?=   'realgud-buffer-command)
 (declare-function realgud-cmdbuf-info-starting-directory= 'realgud-buffer-command)
 (declare-function realgud-cmdbuf-mode-line-update     'realgud-buffer-command)
@@ -147,6 +148,7 @@ return the first argument is always removed.
       (redisplay)
       )
     (loc-changes-clear-buffer)
+    (realgud-srcbuf-mode -1)
     ))
 
 (defun realgud:terminate (&optional buf)
@@ -158,6 +160,7 @@ icons and resets short-key mode."
   (let ((cmdbuf (realgud-get-cmdbuf buf)))
     (if cmdbuf
 	(with-current-buffer cmdbuf
+	  (realgud-locals-terminate)
 	  (realgud-cmdbuf-info-in-debugger?= nil)
 	  (realgud-cmdbuf-info-bp-list= '())
 	  (realgud-cmdbuf-mode-line-update)
@@ -274,6 +277,22 @@ marginal icons is reset."
 
 	;; For comint.el.
 	(comint-mode)
+
+	(let ((map (make-sparse-keymap)))
+	  ;; Signals
+	  (let ((signals-map (make-sparse-keymap "Signals")))
+	    (define-key map [menu-bar signals] (cons "Signals" signals-map))
+	    (define-key signals-map [eof]   '("EOF"   . comint-send-eof))
+	    (define-key signals-map [kill]  '("KILL"  . comint-kill-subjob))
+	    (define-key signals-map [quit]  '("QUIT"  . comint-quit-subjob))
+	    (define-key signals-map [cont]  '("CONT"  . comint-continue-subjob))
+	    (define-key signals-map [stop]  '("STOP"  . comint-stop-subjob))
+	    (define-key signals-map [break] '("BREAK" . comint-interrupt-subjob)))
+	  ;; Put them in the menu bar:
+	  (setq menu-bar-final-items (append '(signals)
+					     menu-bar-final-items))
+	  map)
+
 
 	;; Making overlay-arrow-variable-list buffer local has to be
 	;; done after running commint mode. FIXME: find out why and if

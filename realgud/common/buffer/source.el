@@ -1,4 +1,4 @@
-;;; Copyright (C) 2010, 2012-2015, 2017 Free Software Foundation, Inc
+;;; Copyright (C) 2010, 2012-2015, 2017, 2019 Free Software Foundation, Inc
 
 ;; Author: Rocky Bernstein <rocky@gnu.org>
 
@@ -132,30 +132,40 @@ current buffer."
 ;; which might be active.
 (make-variable-buffer-local 'realgud-srcbuf-info)
 
+(defvar realgud:srcbuf-mode-map
+  (make-sparse-keymap) )
+
+(define-minor-mode realgud-srcbuf-mode
+  "Minor mode for source buffers for the `realgud' debugger."
+  :group 'realgud
+  :global nil
+  :init-value nil
+  :keymap realgud:srcbuf-mode-map
+)
+
 (defun realgud-srcbuf-init
   (src-buffer cmdproc-buffer)
   "Initialize SRC-BUFFER as a source-code buffer for a debugger.
 CMDPROC-BUFFER is the process-command buffer containing the
 debugger."
-  (with-current-buffer cmdproc-buffer
-    (set-buffer src-buffer)
-    (set (make-local-variable 'realgud-srcbuf-info)
-	 (make-realgud-srcbuf-info
-	  :cmdproc cmdproc-buffer
-	  :loc-hist (make-realgud-loc-hist)))
-    (put 'realgud-srcbuf-info 'variable-documentation
-	 "Debugger information for a buffer containing source code.")))
+  (with-current-buffer-safe cmdproc-buffer
+    (when (bufferp src-buffer)
+      (set-buffer src-buffer)
+      (realgud-cmdbuf-add-srcbuf src-buffer cmdproc-buffer)
+      (set (make-local-variable 'realgud-srcbuf-info)
+	   (make-realgud-srcbuf-info
+	    :cmdproc cmdproc-buffer
+	    :loc-hist (make-realgud-loc-hist)))
+      (put 'realgud-srcbuf-info 'variable-documentation
+	   "Debugger information for a buffer containing source code."))))
 
 (defun realgud-srcbuf-init-or-update (src-buffer cmdproc-buffer)
   "Call `realgud-srcbuf-init' for SRC-BUFFER update `realgud-srcbuf-info' variables
 in it with those from CMDPROC-BUFFER"
   (realgud-cmdbuf-add-srcbuf src-buffer cmdproc-buffer)
   (with-current-buffer-safe src-buffer
-    (realgud-populate-common-keys
-     ;; use-local-map returns nil so e have to call (current-local-map)
-     ;; again in this case.
-     (or (current-local-map) (use-local-map (make-sparse-keymap))
-	 (current-local-map)))
+    (realgud-srcbuf-mode)
+    (realgud-populate-common-keys realgud:srcbuf-mode-map)
     (if (realgud-srcbuf-info? realgud-srcbuf-info)
 	(realgud-srcbuf-info-cmdproc= cmdproc-buffer)
       (realgud-srcbuf-init src-buffer cmdproc-buffer))))
